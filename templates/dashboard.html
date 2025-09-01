@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h2>Tourist Safety Dashboard</h2>
+        <div class="user-info">
+            <span>Welcome, <span id="username">User</span></span>
+            <button id="panic-btn" class="panic-button">Panic Button</button>
+        </div>
+    </div>
+
+    <div class="dashboard-content">
+        <div class="map-container">
+            <div id="map" style="height: 400px; width: 100%;"></div>
+        </div>
+
+        <div class="stats-container">
+            <div class="stat-card">
+                <h3>Current Status</h3>
+                <p id="current-status">Normal</p>
+            </div>
+            <div class="stat-card">
+                <h3>Last Anomaly Score</h3>
+                <p id="anomaly-score">0.00</p>
+            </div>
+            <div class="stat-card">
+                <h3>Active Alerts</h3>
+                <p id="active-alerts">0</p>
+            </div>
+        </div>
+
+        <div class="recent-alerts">
+            <h3>Recent Alerts</h3>
+            <div id="alerts-list"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Include Leaflet JS for maps -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+
+<script>
+    // Initialize map
+    var map = L.map('map').setView([40.7128, -74.0060], 13); // Default to NYC
+    
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    
+    // Add user marker
+    var userMarker = L.marker([40.7128, -74.0060]).addTo(map)
+        .bindPopup('Your location')
+        .openPopup();
+    
+    // Add risk zones
+    {% for zone, radius in config.RISK_ZONES %}
+    L.circle([{{ zone[0] }}, {{ zone[1] }}], {
+        color: 'red',
+        fillColor: '#f03',
+        fillOpacity: 0.3,
+        radius: {{ radius }}
+    }).addTo(map).bindPopup('Risk Zone');
+    {% endfor %}
+</script>
+{% endblock %}
