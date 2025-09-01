@@ -1,4 +1,4 @@
-# retrain_simple.py
+# retrain_model.py
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import os
 
 
-# Copy the same class definition here
+# Copy the same class definition from app.py
 class EnsembleAnomalyDetector(BaseEstimator, TransformerMixin):
     """Ensemble of Isolation Forest and Local Outlier Factor for anomaly detection"""
 
@@ -59,26 +59,39 @@ class EnsembleAnomalyDetector(BaseEstimator, TransformerMixin):
 
 
 def generate_synthetic_data(n_samples=10000):
-    """Generate simple synthetic data for testing"""
+    """Generate synthetic training data for the anomaly detection model"""
     np.random.seed(42)
 
-    # Simple features: velocity, acceleration, distance
-    velocity = np.concatenate([
-        np.random.normal(1.4, 0.5, 9000),  # Normal walking
-        np.random.normal(5.0, 2.0, 1000)  # Anomalous (running)
-    ])
+    # Normal behavior parameters
+    normal_velocity_mean = 1.4  # m/s (walking speed)
+    normal_velocity_std = 0.5
+    normal_acceleration_mean = 0
+    normal_acceleration_std = 0.3
 
-    acceleration = np.concatenate([
-        np.random.normal(0, 0.3, 9000),  # Normal
-        np.random.normal(1.5, 1.0, 1000)  # Anomalous
-    ])
+    # Anomalous behavior parameters
+    anomaly_velocity_mean = 5.0  # m/s (running speed)
+    anomaly_velocity_std = 2.0
+    anomaly_acceleration_mean = 1.5
+    anomaly_acceleration_std = 1.0
 
-    distance = np.concatenate([
-        np.random.exponential(10, 9000),  # Close to itinerary
-        np.random.exponential(100, 1000)  # Far from itinerary
-    ])
+    # Generate normal data (90% of samples)
+    n_normal = int(n_samples * 0.9)
+    normal_velocity = np.random.normal(normal_velocity_mean, normal_velocity_std, n_normal)
+    normal_acceleration = np.random.normal(normal_acceleration_mean, normal_acceleration_std, n_normal)
+    normal_distance = np.random.exponential(10, n_normal)  # Most points are close to itinerary
 
-    # Time features
+    # Generate anomaly data (10% of samples)
+    n_anomaly = n_samples - n_normal
+    anomaly_velocity = np.random.normal(anomaly_velocity_mean, anomaly_velocity_std, n_anomaly)
+    anomaly_acceleration = np.random.normal(anomaly_acceleration_mean, anomaly_acceleration_std, n_anomaly)
+    anomaly_distance = np.random.exponential(100, n_anomaly)  # Anomalies are farther from itinerary
+
+    # Combine data
+    velocity = np.concatenate([normal_velocity, anomaly_velocity])
+    acceleration = np.concatenate([normal_acceleration, anomaly_acceleration])
+    distance = np.concatenate([normal_distance, anomaly_distance])
+
+    # Add time-based features (hour of day, day of week)
     hour_of_day = np.random.randint(0, 24, n_samples)
     day_of_week = np.random.randint(0, 7, n_samples)
 
@@ -91,32 +104,43 @@ def generate_synthetic_data(n_samples=10000):
         'day_of_week': day_of_week
     })
 
-    return data
+    # Create target labels (1 for normal, -1 for anomaly)
+    labels = np.concatenate([np.ones(n_normal), -1 * np.ones(n_anomaly)])
+
+    return data, labels
 
 
 def train_and_save_model():
-    """Train and save a simple model"""
-    print("Generating synthetic data...")
-    X = generate_synthetic_data(10000)
+    """Train the anomaly detection model and save it to disk"""
+    print("Generating synthetic training data...")
+    X, y = generate_synthetic_data(10000)
 
-    print("Training model...")
-    # Simple pipeline
+    print("Training ensemble anomaly detection model...")
+    # Create pipeline with scaling and ensemble model
     pipeline = Pipeline([
         ('scaler', StandardScaler()),
         ('detector', EnsembleAnomalyDetector(contamination=0.1))
     ])
 
     # Train the model
-    pipeline.fit(X)
+    pipeline.fit(X, y)
 
-    # Create models directory
+    # Create models directory if it doesn't exist
     os.makedirs('models', exist_ok=True)
 
-    # Save the model
+    # Save the entire pipeline
     joblib.dump(pipeline, 'models/anomaly_detection_model.joblib')
-    joblib.dump(pipeline.named_steps['scaler'], 'models/scaler.joblib')
+    print("Model saved to models/anomaly_detection_model.joblib")
 
-    print("✅ Model trained and saved successfully!")
+    # Also save the scaler separately for potential use elsewhere
+    joblib.dump(pipeline.named_steps['scaler'], 'models/scaler.joblib')
+    print("Scaler saved to models/scaler.joblib")
+
+    # Evaluate the model
+    predictions, scores = pipeline.named_steps['detector'].predict(X)
+    accuracy = np.mean(predictions == y)
+    print(f"Training accuracy: {accuracy:.4f}")
+
     return pipeline
 
 

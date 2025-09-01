@@ -1,5 +1,6 @@
 import os
 import joblib
+import math
 import numpy as np
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template
@@ -144,20 +145,35 @@ def calculate_distance_from_risk_zones(lat, lon, risk_zones):
 
     return min_distance
 
+
 def detect_anomaly(lat, lon, velocity, acceleration, timestamp):
-    """Use ML model to detect anomalies"""
+    """Use ML model to detect anomalies with realistic features"""
     if model is None or scaler is None:
         return 0.0, False
 
     try:
-        # Create feature vector
+        # Create feature vector with realistic features
         hour_of_day = timestamp.hour
+        minute_of_hour = timestamp.minute
         day_of_week = timestamp.weekday()
+        is_weekend = 1 if day_of_week >= 5 else 0  # Saturday or Sunday
 
         # Calculate distance from nearest risk zone
         risk_zone_distance = calculate_distance_from_risk_zones(lat, lon, app.config['RISK_ZONES'])
 
-        features = np.array([[velocity, acceleration, risk_zone_distance, hour_of_day, day_of_week]])
+        # Create feature vector
+        features = np.array([[
+            velocity,  # Current velocity (m/s)
+            acceleration,  # Current acceleration (m/s²)
+            risk_zone_distance,  # Distance from risk zone (meters)
+            hour_of_day,  # Hour of day (0-23)
+            minute_of_hour,  # Minute of hour (0-59)
+            day_of_week,  # Day of week (0-6)
+            is_weekend,  # Is weekend (0 or 1)
+            max(0, velocity - 2.0),  # Excess velocity (> 2m/s is unusual for walking)
+            abs(acceleration),  # Absolute acceleration (sudden changes)
+            risk_zone_distance < 200  # Near risk zone (boolean as 0/1)
+        ]])
 
         # Scale features
         features_scaled = scaler.transform(features)
@@ -174,6 +190,49 @@ def detect_anomaly(lat, lon, velocity, acceleration, timestamp):
     except Exception as e:
         print(f"Error in anomaly detection: {e}")
         return 0.0, False
+
+
+def calculate_movement_patterns(locations):
+    """Calculate movement patterns from previous locations"""
+    if len(locations) < 2:
+        return 0.0, 0.0, 0.0
+
+    velocities = []
+    directions = []
+
+    # Calculate velocities and directions between consecutive points
+    for i in range(1, len(locations)):
+        prev = locations[i - 1]
+        curr = locations[i]
+
+        # Calculate velocity
+        time_diff = (curr['timestamp'] - prev['timestamp']).total_seconds()
+        if time_diff > 0:
+            distance = geodesic((prev['lat'], prev['lon']), (curr['lat'], curr['lon'])).meters
+            velocity = distance / time_diff
+            velocities.append(velocity)
+
+            # Calculate direction (bearing)
+            y = math.sin(curr['lon'] - prev['lon']) * math.cos(curr['lat'])
+            x = math.cos(prev['lat']) * math.sin(curr['lat']) - math.sin(prev['lat']) * math.cos(
+                curr['lat']) * math.cos(curr['lon'] - prev['lon'])
+            bearing = math.atan2(y, x)
+            directions.append(math.degrees(bearing))
+
+    if not velocities:
+        return 0.0, 0.0, 0.0
+
+    # Calculate direction changes
+    direction_changes = 0
+    if len(directions) > 1:
+        for i in range(1, len(directions)):
+            if abs(directions[i] - directions[i - 1]) > 45:  # Significant direction change
+                direction_changes += 1
+
+    avg_velocity = sum(velocities) / len(velocities)
+    max_velocity = max(velocities)
+
+    return avg_velocity, max_velocity, direction_changes
 
 # Routes
 @app.route('/')
@@ -294,7 +353,7 @@ def update_location():
         timestamp = datetime.utcnow()
 
         # Get tourist's previous location
-        prev_location = Location.query.filter_by(tourist_id=current_user_id) \
+        prev_location = Location.query.filter_by(tourist_id=current_user_id)\
             .order_by(Location.timestamp.desc()).first()
 
         # Calculate velocity and acceleration
